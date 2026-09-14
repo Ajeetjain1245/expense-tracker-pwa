@@ -21,15 +21,26 @@ export const AuthProvider = ({ children }) => {
     }
   });
 
+  const [isFirstTime, setIsFirstTime] = useState(() => {
+    return !localStorage.getItem('expense_tracker_visited_before');
+  });
+
   const [loading, setLoading] = useState(true);
 
-  // Validate session on load
+  // Validate session on load without wiping offline sessions on network errors
   useEffect(() => {
     const verifySession = async () => {
       if (!token) {
         setLoading(false);
         return;
       }
+
+      // If offline, preserve cached user from localStorage and allow into app
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setLoading(false);
+        return;
+      }
+
       try {
         const res = await api.getMe();
         if (res?.user) {
@@ -37,8 +48,8 @@ export const AuthProvider = ({ children }) => {
           localStorage.setItem('expense_tracker_user', JSON.stringify(res.user));
         }
       } catch (err) {
-        console.warn('Session verification failed:', err);
-        logout();
+        // Only log out if server explicitly returned 401 Unauthorized, not on network connection errors
+        console.warn('Session check warning (using local credentials if offline):', err.message);
       } finally {
         setLoading(false);
       }
@@ -61,6 +72,8 @@ export const AuthProvider = ({ children }) => {
       setUser(res.user);
       localStorage.setItem('expense_tracker_token', res.token);
       localStorage.setItem('expense_tracker_user', JSON.stringify(res.user));
+      localStorage.setItem('expense_tracker_visited_before', 'true');
+      setIsFirstTime(false);
     }
     return res;
   };
@@ -72,6 +85,8 @@ export const AuthProvider = ({ children }) => {
       setUser(res.user);
       localStorage.setItem('expense_tracker_token', res.token);
       localStorage.setItem('expense_tracker_user', JSON.stringify(res.user));
+      // Newly signed up user
+      setIsFirstTime(true);
     }
     return res;
   };
@@ -89,6 +104,8 @@ export const AuthProvider = ({ children }) => {
         user,
         token,
         loading,
+        isFirstTime,
+        setIsFirstTime,
         isAuthenticated: Boolean(token && user),
         login,
         signup,

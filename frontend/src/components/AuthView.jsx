@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Mail, Lock, User, Eye, EyeOff, Wallet, ArrowRight, ShieldCheck, PieChart, Smartphone } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Mail, Lock, User, Eye, EyeOff, Wallet, ArrowRight, ShieldCheck, PieChart, Smartphone, WifiOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const AuthView = () => {
@@ -10,12 +10,29 @@ export const AuthView = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
 
   const { login, signup } = useAuth();
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (isOffline || !navigator.onLine) {
+      setError('You are currently offline. Please connect to the internet to sign in or register.');
+      return;
+    }
 
     if (!email || !password || (isSignup && !name)) {
       setError('Please fill in all required fields');
@@ -35,17 +52,25 @@ export const AuthView = () => {
         await login(email, password);
       }
     } catch (err) {
-      setError(err.message || 'Authentication failed. Please try again.');
+      const msg = err.message || '';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || !navigator.onLine) {
+        setError('Unable to connect to the cloud server. Please check your internet connection.');
+      } else {
+        setError(msg || 'Authentication failed. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDemoLogin = async () => {
+    if (isOffline || !navigator.onLine) {
+      setError('Demo login requires an internet connection for the first sign in.');
+      return;
+    }
     setError('');
     setSubmitting(true);
     try {
-      // Try logging in with demo account or create it if not existing
       try {
         await login('demo@example.com', 'demo123');
       } catch {
@@ -136,6 +161,14 @@ export const AuthView = () => {
                 : 'Enter your credentials to access your dashboard'}
             </p>
           </div>
+
+          {/* Offline alert banner */}
+          {isOffline && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-800 animate-fade-in">
+              <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>You are currently offline. Connect to Wi-Fi/data to log in or create an account.</span>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
