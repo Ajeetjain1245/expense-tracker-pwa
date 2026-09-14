@@ -7,10 +7,10 @@ import { ExpenseListView } from './components/ExpenseListView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { Toast } from './components/Toast';
-import { api } from './services/api';
+import { syncManager } from './services/syncManager';
 
 function MainApp() {
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
@@ -32,23 +32,23 @@ function MainApp() {
     setToast({ message, type });
   };
 
-  // Fetch Dashboard Summary
+  // Fetch Summary via SyncManager (Server when online, IndexedDB calculation when offline)
   const loadSummary = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await api.getSummary();
-      setSummary(res.data);
+      const data = await syncManager.getSummary(user?.id);
+      setSummary(data);
     } catch (err) {
-      console.error('Failed to load summary:', err);
+      console.warn('Failed to load summary:', err);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user?.id]);
 
-  // Fetch Expenses with active filters
+  // Fetch Expenses via SyncManager (Server + Cache when online, IndexedDB when offline)
   const loadExpenses = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
       setLoading(true);
-      const res = await api.getExpenses(filters);
+      const res = await syncManager.getExpenses(user?.id, filters);
       setExpenses(res.data || []);
     } catch (err) {
       console.error('Failed to load expenses:', err);
@@ -56,19 +56,23 @@ function MainApp() {
     } finally {
       setLoading(false);
     }
-  }, [filters, isAuthenticated]);
+  }, [filters, isAuthenticated, user?.id]);
 
   useEffect(() => {
     if (isAuthenticated) {
       loadSummary();
-    }
-  }, [loadSummary, isAuthenticated]);
-
-  useEffect(() => {
-    if (isAuthenticated) {
       loadExpenses();
     }
-  }, [loadExpenses, isAuthenticated]);
+  }, [loadSummary, loadExpenses, isAuthenticated]);
+
+  // Handle sync completion callback
+  const handleSyncComplete = (syncedCount) => {
+    if (syncedCount > 0) {
+      showToast(`⚡ Synced ${syncedCount} offline ${syncedCount === 1 ? 'expense' : 'expenses'} to cloud!`, 'success');
+      loadSummary();
+      loadExpenses();
+    }
+  };
 
   // Open Modal for Create
   const handleOpenAddModal = () => {
@@ -82,15 +86,27 @@ function MainApp() {
     setIsModalOpen(true);
   };
 
-  // Handle Form Submit (Add or Edit)
+  // Handle Form Submit (Add or Edit with local-first IndexedDB + Auto Sync)
   const handleFormSubmit = async (payload, id) => {
     try {
+      const isOnline = navigator.onLine;
+
       if (id) {
-        await api.updateExpense(id, payload);
-        showToast('Expense updated successfully!');
+        await syncManager.updateExpense(id, payload, user?.id);
+        showToast(
+          isOnline
+            ? 'Expense updated successfully!'
+            : 'Expense updated locally in IndexedDB (Offline)',
+          'success'
+        );
       } else {
-        await api.createExpense(payload);
-        showToast('Expense recorded successfully!');
+        await syncManager.createExpense(payload, user?.id);
+        showToast(
+          isOnline
+            ? 'Expense recorded successfully!'
+            : 'Expense saved to local IndexedDB (Offline)',
+          'success'
+        );
       }
 
       await Promise.all([loadSummary(), loadExpenses()]);
@@ -106,7 +122,7 @@ function MainApp() {
     }
 
     try {
-      await api.deleteExpense(id);
+      await syncManager.deleteExpense(id, user?.id);
       showToast('Expense deleted successfully', 'info');
       await Promise.all([loadSummary(), loadExpenses()]);
     } catch (err) {
@@ -143,6 +159,7 @@ function MainApp() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddModal={handleOpenAddModal}
+        onSyncComplete={handleSyncComplete}
       />
 
       {/* Main Container */}
